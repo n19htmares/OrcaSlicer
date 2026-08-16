@@ -6077,7 +6077,20 @@ bool Sidebar::should_show_SEMM_buttons()
     bool is_bbl_vendor = preset_bundle.is_bbl_vendor();
     auto cfg = preset_bundle.printers.get_edited_preset().config;
 
-    return cfg.opt_bool("single_extruder_multi_material") || is_bbl_vendor;
+    // Fork: also treat Snapmaker U1 as multi material capable single nozzle printer
+    // that supports more logical filaments than physical extruders via manual/AFC-driven
+    // swaps, same rationale as single_extruder_multi_material, but the stock U1 preset
+    // doesn't set that flag. Mirrors Snapmaker's own fork behavior (which hardcodes this
+    // unconditionally true) but scoped to U1 only rather than all printers. This is a
+    // shared gate feeding 4 call sites (sidebar +/-/flushing-volumes, filament-edit
+    // popup-menu-vs-dialog branch, and ObjColorDialog behavior on .obj/.step import)-
+    // all 4 intentionally shift together for U1; see orcaslicer-6th-commit-plan.md for
+    // the full enumeration and reasoning.
+    std::string printer_model = cfg.opt_string("printer_model");
+    bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker")
+                        && boost::icontains(printer_model, "U1");
+
+    return cfg.opt_bool("single_extruder_multi_material") || is_bbl_vendor || is_snapmaker_u1;
 }
 
 void Sidebar::show_SEMM_buttons()
