@@ -5714,6 +5714,60 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
                                                                                       this->filament_presets.back());
         num_filaments = this->filament_presets.size();
     }
+
+    // Orca: keep the per-filament project-config vectors in lock-step with filament_presets.
+    //
+    // filament_presets is the authority for "how many filaments exist" and is re-grown above to
+    // the printer's toolhead/extruder count. Several callers (sync_ams_list's Overwriting branch,
+    // set_num_filaments/update_num_filaments on a toolchanger, on_extruders_count_changed, .3mf
+    // project load) leave filament_colour / filament_colour_type / filament_multi_colour /
+    // filament_map / filament_nozzle_map / filament_volume_map at a shorter length than
+    // filament_presets. That mismatch later blows up in PresetBundle::full_fff_config()
+    // (out-of-bounds filament_presets[0] / ConfigOptionVector::get_at() on an empty vector, or
+    // ConfigOptionVector::resize() with no default) - the crash seen after "Sync AMS -> Overwriting
+    // -> Synchronize now" when the AMS reports fewer filaments than the printer has toolheads.
+    //
+    // Pad here, in the one shared function, so every caller is protected rather than duplicating
+    // the fixup at each mutation site. Only ever grow (never shrink), and duplicate the last
+    // existing value - the same heuristic used for filament_presets just above and by
+    // set_num_filaments() - falling back to a sensible default when the vector is empty.
+    {
+        auto pad_strings = [num_filaments](ConfigOptionStrings* opt, const std::string& fallback) {
+            if (opt && opt->values.size() < num_filaments)
+                opt->values.resize(num_filaments, opt->values.empty() ? fallback : opt->values.back());
+        };
+        auto pad_ints = [num_filaments](ConfigOptionInts* opt, int fallback) {
+            if (opt && opt->values.size() < num_filaments)
+                opt->values.resize(num_filaments, opt->values.empty() ? fallback : opt->values.back());
+        };
+
+        // Fallbacks mirror set_num_filaments() / sync_ams_list()'s placeholder branch:
+        // "#CECECE" grey for an unknown color, "1" = default (non-gradient) color type,
+        // filament_map -> extruder 1, filament_nozzle_map -> 0, filament_volume_map -> Standard.
+        auto* filament_colour = this->project_config.option<ConfigOptionStrings>("filament_colour");
+        pad_strings(filament_colour, "#CECECE");
+        pad_strings(this->project_config.option<ConfigOptionStrings>("filament_colour_type"), "1");
+
+        // filament_multi_colour must stay visually consistent with filament_colour: pad its new
+        // slots with the matching per-slot color from the just-padded filament_colour (which is
+        // now at least num_filaments long), rather than an independent placeholder.
+        if (auto* filament_multi_colour = this->project_config.option<ConfigOptionStrings>("filament_multi_colour");
+            filament_multi_colour && filament_multi_colour->values.size() < num_filaments) {
+            for (size_t i = filament_multi_colour->values.size(); i < num_filaments; ++i) {
+                const std::string color =
+                    (filament_colour && i < filament_colour->values.size()) ? filament_colour->values[i] :
+                    !filament_multi_colour->values.empty()                  ? filament_multi_colour->values.back() :
+                                                                             std::string("#CECECE");
+                filament_multi_colour->values.push_back(color);
+            }
+        }
+
+        pad_ints(this->project_config.option<ConfigOptionInts>("filament_map"),        1);
+        pad_ints(this->project_config.option<ConfigOptionInts>("filament_nozzle_map"), 0);
+        pad_ints(this->project_config.option<ConfigOptionInts>("filament_volume_map"),
+                 static_cast<int>(NozzleVolumeType::nvtStandard));
+    }
+
     if (to_delete_filament_id == -1)
         to_delete_filament_id = num_filaments;
 
