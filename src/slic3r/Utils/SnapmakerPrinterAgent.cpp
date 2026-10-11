@@ -37,7 +37,7 @@ AgentInfo SnapmakerPrinterAgent::get_agent_info_static()
     return AgentInfo{"snapmaker", "Snapmaker", SNAPMAKER_AGENT_VERSION, "Snapmaker printer agent"};
 }
 
-std::string SnapmakerPrinterAgent::combine_filament_type(const std::string& type, const std::string& sub_type)
+std::string SnapmakerPrinterAgent::combine_filament_type(const std::string& type, const std::string& sub_type, bool keep_hint)
 {
     const std::string base = trim_and_upper(type);
     const std::string sub  = trim_and_upper(sub_type);
@@ -52,6 +52,12 @@ std::string SnapmakerPrinterAgent::combine_filament_type(const std::string& type
         return base + "-CF";
     if (sub == "GF")
         return base + "-GF";
+
+    // The remaining sub-types are only hints for resolve_tray_info_idx; the tray type used for
+    // mapping and display stays the base type.
+    if (!keep_hint)
+        return base;
+
     if (sub == "SNAPSPEED" || sub == "HS")
         return base + " HIGH SPEED";
     if (sub == "SILK")
@@ -63,7 +69,6 @@ std::string SnapmakerPrinterAgent::combine_filament_type(const std::string& type
     if (sub == "MARBLE")
         return base + " MARBLE";
 
-    // Preserve unknown sub-type as a hint for central vendor/type matching.
     return base + " " + sub;
 }
 
@@ -209,10 +214,11 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
     std::string base_url = device_info.base_url;
     if (base_url.empty() && !dev_id.empty()) {
         if (auto* app_cfg = GUI::wxGetApp().app_config) {
-            base_url = app_cfg->get("ip_address", dev_id);
+            const std::string host = app_cfg->get("ip_address", dev_id);
+            if (!host.empty())
+                base_url = normalize_base_url(device_info.use_ssl, host, "");
         }
     }
-    base_url = normalize_base_url(base_url, "");
     if (base_url.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "SnapmakerPrinterAgent::fetch_filament_info: cannot resolve base_url"
                                    << ", device_info.base_url='" << device_info.base_url
@@ -300,10 +306,12 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
         tray.has_filament = filament_exist[i];
 
         if (tray.has_filament) {
-            tray.tray_type     = combine_filament_type(safe_at(filament_type, i, empty_str),
-                                                       safe_at(filament_sub_type, i, empty_str));
+            const std::string raw_type     = safe_at(filament_type, i, empty_str);
+            const std::string raw_sub_type = safe_at(filament_sub_type, i, empty_str);
+            const std::string  type_hint    = combine_filament_type(raw_type, raw_sub_type, true);
+            tray.tray_type     = combine_filament_type(raw_type, raw_sub_type, false);
             tray.tray_vendor   = safe_at(filament_vendor, i, empty_str);
-            tray.tray_info_idx = resolve_tray_info_idx(tray.tray_vendor, tray.tray_type);
+            tray.tray_info_idx = resolve_tray_info_idx(tray.tray_vendor, type_hint);
             if (tray.tray_info_idx.empty()) {
                 std::string base_type = tray.tray_type;
                 if (auto sep = base_type.find(' '); sep != std::string::npos)
