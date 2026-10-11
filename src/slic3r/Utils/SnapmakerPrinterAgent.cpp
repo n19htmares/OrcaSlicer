@@ -83,7 +83,7 @@ std::string SnapmakerPrinterAgent::resolve_tray_info_idx(const std::string& tray
     if (target_type.empty())
         return {};
 
-    const auto tokenize_upper_words = [this](const std::string& input) {
+    const auto tokenize_upper_words = [](const std::string& input) {
         std::vector<std::string> tokens;
         std::string current;
         const std::string text = trim_and_upper(input);
