@@ -6554,10 +6554,12 @@ bool Sidebar::should_show_SEMM_buttons()
     // swaps, same rationale as single_extruder_multi_material, but the stock U1 preset
     // doesn't set that flag. Mirrors Snapmaker's own fork behavior (which hardcodes this
     // unconditionally true) but scoped to U1 only rather than all printers. This is a
-    // shared gate feeding 4 call sites (sidebar +/-/flushing-volumes, filament-edit
-    // popup-menu-vs-dialog branch, and ObjColorDialog behavior on .obj/.step import)-
-    // all 4 intentionally shift together for U1; see orcaslicer-6th-commit-plan.md for
-    // the full enumeration and reasoning.
+    // shared gate feeding these callers, which all intentionally shift together for U1:
+    //  - the filament edit button handler (popup menu vs. direct dialog),
+    //  - Sidebar::show_SEMM_buttons() visibility of the add/remove/flushing-volumes buttons,
+    //  - GLCanvas3D::is_flushing_matrix_error() in GLCanvas3D.cpp,
+    //  - the filament context menu "Merge with" and "Delete" items in GUI_Factories.cpp.
+    // See orcaslicer-6th-commit-plan.md for the original enumeration and reasoning.
     std::string printer_model = cfg.opt_string("printer_model");
     bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker")
                         && boost::icontains(printer_model, "U1");
