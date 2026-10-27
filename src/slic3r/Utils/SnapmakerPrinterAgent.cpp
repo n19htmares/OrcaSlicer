@@ -10,6 +10,8 @@
 #include <vector>
 #include <string>
 #include "libslic3r/Preset.hpp"
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <utility>
 
@@ -29,16 +31,55 @@ T safe_at(const std::vector<T>& vec, int index, const T& fallback)
 std::string find_closest_color_preset_by_vendor_and_type(const PresetCollection& filaments,
                                                          const std::string&      vendor_name,
                                                          const std::string&      filament_type,
-                                                         const std::string&      color_rgba)
+                                                         const std::string&      color_rgba,
+                                                         const std::string&      sub_type)
 {
     std::string best_match_id       = "";
     int         best_color_distance = 0xffffffff;
+    int         best_subtype_hits   = -1;
+    int         best_extra_tokens   = 0;
+
+    const auto tokenize = [](const std::string& text) {
+        std::vector<std::string> tokens;
+        std::string              cur;
+        for (unsigned char ch : text) {
+            if (std::isalnum(ch))
+                cur.push_back(static_cast<char>(std::toupper(ch)));
+            else if (!cur.empty()) {
+                tokens.push_back(std::move(cur));
+                cur.clear();
+            }
+        }
+        if (!cur.empty())
+            tokens.push_back(std::move(cur));
+        return tokens;
+    };
+    const auto has_token = [](const std::vector<std::string>& tokens, const std::string& t) {
+        return std::find(tokens.begin(), tokens.end(), t) != tokens.end();
+    };
+    // tray_type may carry a sub-type word ("PLA MATTE"); presets store only the base type ("PLA")
+    const std::string base_type = filament_type.substr(0, filament_type.find(' '));
+    const auto        vendor_tokens  = tokenize(vendor_name);
+    auto              subtype_tokens = tokenize(sub_type);
+    subtype_tokens.erase(std::remove(subtype_tokens.begin(), subtype_tokens.end(), "NONE"), subtype_tokens.end());
+    const auto type_tokens = tokenize(base_type);
 
     for (const auto& p : filaments.get_presets()) {
+        const std::string p_type = p.config.opt_string("filament_type", 0u);
         if (p.is_visible && p.is_compatible &&
             // Filament profile must be detached from parent to be considered for matching
             filaments.get_preset_base(p) == &p && p.config.opt_string("filament_vendor", 0u) == vendor_name &&
-            p.config.opt_string("filament_type", 0u) == filament_type) {
+            (p_type == filament_type || p_type == base_type)) {
+            // Name tokens without the " @printer" suffix; subtype words must appear here
+            const auto name_tokens = tokenize(p.name.substr(0, p.name.find(" @")));
+            int        subtype_hits = 0;
+            for (const auto& t : subtype_tokens)
+                subtype_hits += has_token(name_tokens, t) ? 1 : 0;
+            int extra_tokens = 0;
+            for (const auto& t : name_tokens)
+                if (!has_token(vendor_tokens, t) && !has_token(type_tokens, t) && !has_token(subtype_tokens, t))
+                    ++extra_tokens;
+
             // The printer returns RGBA in the format RRGGBBAA, but profiles store color as #RRGGBB,
             // so we must remove # and ignore alpha channel for distance calculation
             unsigned int target_color_value = std::stoul(color_rgba.substr(0, color_rgba.length() - 2), nullptr, 16);
@@ -61,7 +102,13 @@ std::string find_closest_color_preset_by_vendor_and_type(const PresetCollection&
             int db = (((target_color_value >> 16) & 0xff) - ((p_color_value >> 16) & 0xff));
             unsigned int distance = dr * dr + dg * dg + db * db;
 
-            if (distance < best_color_distance) {
+            // Rank: most sub-type words matched, then fewest unexplained name words, then closest color
+            const bool better = subtype_hits != best_subtype_hits   ? subtype_hits > best_subtype_hits :
+                                extra_tokens != best_extra_tokens   ? extra_tokens < best_extra_tokens :
+                                                                      static_cast<unsigned int>(distance) < static_cast<unsigned int>(best_color_distance);
+            if (better) {
+                best_subtype_hits   = subtype_hits;
+                best_extra_tokens   = extra_tokens;
                 best_color_distance = distance;
                 best_match_id       = p.filament_id;
             }
@@ -201,7 +248,8 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
             if (bundle) {
                 std::string vendor      = safe_at(filament_vendor, i, empty_str);
                 std::string filament_id = find_closest_color_preset_by_vendor_and_type(bundle->filaments, vendor, tray.tray_type,
-                                                                                       tray.tray_color);
+                                                                                       tray.tray_color,
+                                                                                       safe_at(filament_sub_type, i, empty_str));
 
                 if (!filament_id.empty()) {
                     tray.tray_info_idx = filament_id;
