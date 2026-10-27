@@ -253,6 +253,16 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
 
                 if (!filament_id.empty()) {
                     tray.tray_info_idx = filament_id;
+                    // The AMS mapping popup compares tray_type with the project preset's filament_type, so
+                    // report the matched preset's own type, not the "PLA MATTE" style hint used for matching.
+                    for (const auto& p : bundle->filaments.get_presets()) {
+                        if (p.is_compatible && bundle->filaments.get_preset_base(p) == &p && p.filament_id == filament_id) {
+                            const std::string preset_type = p.config.opt_string("filament_type", 0u);
+                            if (!preset_type.empty())
+                                tray.tray_type = preset_type;
+                            break;
+                        }
+                    }
                     BOOST_LOG_TRIVIAL(warning) << "Filament sync: Found manufacturer-specific profile for slot " << i << ": "
                                                << filament_id;
                 } else {
